@@ -43,7 +43,7 @@
       </div>
       
       <div 
-        *ngFor="let slot of slots" 
+        *ngFor="let slot of slots; trackBy: trackBySlotId"
         class="slot-card"
         [class.slot-booked]="!isAvailable(slot)"
         [class.slot-user]="isSignedUp(slot)">

@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
@@ -28,29 +28,43 @@ export class CalendarComponent implements OnInit, OnDestroy {
   
   private refreshSub?: Subscription;
   private categorySub?: Subscription;
+  private isInitialized = false;
+  private loadingSlots = false;
 
-  constructor(private api: ApiService) {}
+  constructor(
+    private api: ApiService,
+    private cdr: ChangeDetectorRef
+  ) {}
 
   ngOnInit() {
     console.log('📅 Calendar initialized');
     
-    // Initialize to current week
+    // Initialize to current week FIRST
     this.currentWeekStart = this.getWeekStartDate(new Date());
     
-    // Subscribe to category changes
+    // Subscribe to category changes (will trigger immediately with current value)
     this.categorySub = this.api.selectedCategory$.subscribe(category => {
       console.log('📋 Category updated to:', category);
       this.selectedCategory = category;
-      this.loadSlots();
+      
+      // Only reload if we're already initialized (skip first emission)
+      if (this.isInitialized) {
+        this.loadSlots();
+      }
     });
     
-    // Subscribe to refresh events
+    // Subscribe to refresh events (will trigger immediately with undefined)
     this.refreshSub = this.api.refresh$.subscribe(() => {
       console.log('🔄 Refresh triggered');
-      this.loadSlots();
+      
+      // Only reload if we're already initialized (skip first emission)
+      if (this.isInitialized) {
+        this.loadSlots();
+      }
     });
     
-    // Initial load
+    // Now mark as initialized and do the initial load
+    this.isInitialized = true;
     this.loadSlots();
   }
 
@@ -60,8 +74,16 @@ export class CalendarComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * TrackBy function for *ngFor to prevent DOM reuse
+   * CRITICAL: This ensures Angular creates new DOM elements for each slot
+   */
+  trackBySlotId(index: number, slot: TimeSlot): any {
+    return slot.id || index;
+  }
+
+  /**
    * Get Monday of the week for any given date
-   * Returns a Date object set to Monday at 00:00:00
+   * Returns a Date object set to Monday at 00:00:00 in LOCAL timezone
    */
   private getWeekStartDate(date: Date): Date {
     const d = new Date(date);
@@ -83,86 +105,81 @@ export class CalendarComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Check if a date falls within the current week
-   * Uses date-only comparison to avoid timezone issues
-   */
-  private isDateInCurrentWeek(dateStr: string): boolean {
-    // Parse the slot date
-    const slotDate = new Date(dateStr);
-    
-    // Create date-only versions for comparison (midnight local time, no timezone conversion)
-    const slotDateOnly = new Date(
-      slotDate.getFullYear(), 
-      slotDate.getMonth(), 
-      slotDate.getDate()
-    );
-    
-    const weekStart = new Date(
-      this.currentWeekStart.getFullYear(), 
-      this.currentWeekStart.getMonth(), 
-      this.currentWeekStart.getDate()
-    );
-    
-    const weekEnd = this.getWeekEndDate();
-    const weekEndOnly = new Date(
-      weekEnd.getFullYear(), 
-      weekEnd.getMonth(), 
-      weekEnd.getDate()
-    );
-    
-    // Compare date-only values
-    return slotDateOnly >= weekStart && slotDateOnly <= weekEndOnly;
-  }
-
-  /**
    * Load slots for current week and selected category
-   * Filters API results to only show slots within the current week
    */
   loadSlots() {
-    const weekStartStr = this.formatDateForAPI(this.currentWeekStart);
-    const weekEnd = this.getWeekEndDate();
+    // Prevent concurrent loads
+    if (this.loadingSlots) {
+      console.log('⚠️ Already loading slots, skipping duplicate request');
+      return;
+    }
     
-    console.log('📥 Loading slots for week');
-    console.log('   Week Start:', weekStartStr, '(', this.currentWeekStart.toDateString(), ')');
-    console.log('   Week End:', this.formatDateForAPI(weekEnd), '(', weekEnd.toDateString(), ')');
-    console.log('   Category:', this.selectedCategory);
+    this.loadingSlots = true;
+    
+    // CRITICAL: Clear slots immediately to prevent showing stale data
+    this.slots = [];
+    this.cdr.detectChanges(); // Force UI update
+    
+    const weekStartStr = this.formatDateForAPI(this.currentWeekStart);
+    
+    console.log('═══════════════════════════════════════');
+    console.log('📥 LOADING SLOTS');
+    console.log('═══════════════════════════════════════');
+    console.log('Week Start for API:', weekStartStr);
+    console.log('Week Range Display:', this.getWeekRange());
+    console.log('Category:', this.selectedCategory);
+    console.log('Full API URL: /slots/?week_start=' + weekStartStr + '&category=' + encodeURIComponent(this.selectedCategory));
+    console.log('═══════════════════════════════════════');
     
     this.api.getSlots(weekStartStr, this.selectedCategory).subscribe({
       next: (slots) => {
-        console.log('✅ Received slots from API:', slots.length);
+        console.log('═══════════════════════════════════════');
+        console.log('✅ RECEIVED SLOTS FROM API');
+        console.log('═══════════════════════════════════════');
+        console.log('Total slots received:', slots.length);
+        console.log('Week being displayed:', this.getWeekRange());
         
-        // Filter slots to only show those within the current week
-        const filteredSlots = slots.filter(slot => {
+        // Log each slot received
+        slots.forEach((slot, index) => {
           const slotDate = new Date(slot.start_time);
-          const isInWeek = this.isDateInCurrentWeek(slot.start_time);
-          
-          if (isInWeek) {
-            console.log(`   ✅ INCLUDED - Slot ${slot.id}: ${slot.start_time} (${slotDate.toDateString()})`);
-          } else {
-            console.log(`   ❌ EXCLUDED - Slot ${slot.id}: ${slot.start_time} (${slotDate.toDateString()})`);
-          }
-          
-          return isInWeek;
+          console.log(`Slot ${index + 1}:`, {
+            id: slot.id,
+            start_time: slot.start_time,
+            start_date: slotDate.toLocaleDateString(),
+            user_id: slot.user_id
+          });
         });
         
-        console.log('   📊 Filtered slots for this week:', filteredSlots.length);
-        
-        if (filteredSlots.length > 0) {
-          console.log('   First slot:', filteredSlots[0].start_time);
-          console.log('   Last slot:', filteredSlots[filteredSlots.length - 1].start_time);
-        }
-        
-        // Sort by start time
-        this.slots = filteredSlots.sort((a, b) => 
+        // CRITICAL: Create NEW array (don't mutate existing)
+        const sortedSlots = [...slots].sort((a, b) => 
           new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
         );
         
-        console.log('   ✅ Final display count:', this.slots.length);
+        // Assign new array to trigger change detection
+        this.slots = sortedSlots;
+        
+        console.log('═══════════════════════════════════════');
+        console.log('📊 FINAL DISPLAY');
+        console.log('═══════════════════════════════════════');
+        console.log('Total slots to display:', this.slots.length);
+        if (this.slots.length > 0) {
+          console.log('First slot:', this.slots[0].start_time);
+          console.log('Last slot:', this.slots[this.slots.length - 1].start_time);
+        }
+        console.log('═══════════════════════════════════════');
+        
+        this.loadingSlots = false;
+        this.cdr.detectChanges(); // Force UI update
       },
       error: (err) => {
-        console.error('❌ Error loading slots:', err);
-        console.error('   Error details:', err.error);
+        console.error('═══════════════════════════════════════');
+        console.error('❌ ERROR LOADING SLOTS');
+        console.error('═══════════════════════════════════════');
+        console.error('Error:', err);
+        console.error('═══════════════════════════════════════');
         this.slots = [];
+        this.loadingSlots = false;
+        this.cdr.detectChanges(); // Force UI update
       }
     });
   }
@@ -171,12 +188,14 @@ export class CalendarComponent implements OnInit, OnDestroy {
    * Navigate to previous week
    */
   previousWeek() {
+    console.log('\n⬅️ PREVIOUS WEEK CLICKED');
+    
     const newWeekStart = new Date(this.currentWeekStart);
     newWeekStart.setDate(newWeekStart.getDate() - 7);
     this.currentWeekStart = newWeekStart;
     
-    console.log('⬅️ Previous week');
-    console.log('   New week:', this.getWeekRange());
+    console.log('New week:', this.getWeekRange());
+    
     this.loadSlots();
   }
 
@@ -184,12 +203,14 @@ export class CalendarComponent implements OnInit, OnDestroy {
    * Navigate to next week
    */
   nextWeek() {
+    console.log('\n➡️ NEXT WEEK CLICKED');
+    
     const newWeekStart = new Date(this.currentWeekStart);
     newWeekStart.setDate(newWeekStart.getDate() + 7);
     this.currentWeekStart = newWeekStart;
     
-    console.log('➡️ Next week');
-    console.log('   New week:', this.getWeekRange());
+    console.log('New week:', this.getWeekRange());
+    
     this.loadSlots();
   }
 
@@ -197,8 +218,13 @@ export class CalendarComponent implements OnInit, OnDestroy {
    * Go to current week
    */
   goToCurrentWeek() {
-    this.currentWeekStart = this.getWeekStartDate(new Date());
-    console.log('🎯 Current week:', this.getWeekRange());
+    console.log('\n🎯 TODAY BUTTON CLICKED');
+    const today = new Date();
+    
+    this.currentWeekStart = this.getWeekStartDate(today);
+    
+    console.log('Going to week:', this.getWeekRange());
+    
     this.loadSlots();
   }
 
@@ -212,21 +238,13 @@ export class CalendarComponent implements OnInit, OnDestroy {
     }
     
     console.log('✏️ Signing up for slot:', slot.id);
-    console.log('   Slot details:', {
-      id: slot.id,
-      category: slot.category,
-      start: slot.start_time,
-      end: slot.end_time
-    });
     
     this.api.signup(slot.id, this.currentUserId).subscribe({
       next: () => {
         console.log('✅ Signed up successfully');
-        // The refresh$ observable will automatically trigger a reload
       },
       error: (err) => {
         console.error('❌ Error signing up:', err);
-        console.error('   Error details:', err.error);
         alert('Failed to sign up. The slot may already be taken.');
       }
     });
@@ -242,21 +260,13 @@ export class CalendarComponent implements OnInit, OnDestroy {
     }
     
     console.log('🚫 Unsubscribing from slot:', slot.id);
-    console.log('   Slot details:', {
-      id: slot.id,
-      category: slot.category,
-      start: slot.start_time,
-      end: slot.end_time
-    });
     
     this.api.unsubscribe(slot.id).subscribe({
       next: () => {
         console.log('✅ Unsubscribed successfully');
-        // The refresh$ observable will automatically trigger a reload
       },
       error: (err) => {
         console.error('❌ Error unsubscribing:', err);
-        console.error('   Error details:', err.error);
         alert('Failed to unsubscribe. Please try again.');
       }
     });
@@ -266,16 +276,14 @@ export class CalendarComponent implements OnInit, OnDestroy {
    * Check if user is signed up for this slot
    */
   isSignedUp(slot: TimeSlot): boolean {
-    const signedUp = slot.user_id === this.currentUserId;
-    return signedUp;
+    return slot.user_id === this.currentUserId;
   }
 
   /**
    * Check if slot is available for signup
    */
   isAvailable(slot: TimeSlot): boolean {
-    const available = !slot.user_id;
-    return available;
+    return !slot.user_id;
   }
 
   /**
@@ -288,7 +296,7 @@ export class CalendarComponent implements OnInit, OnDestroy {
 
   /**
    * Format date for API (YYYY-MM-DD)
-   * Uses local timezone, not UTC
+   * Uses LOCAL timezone (not UTC)
    */
   private formatDateForAPI(date: Date): string {
     const year = date.getFullYear();
