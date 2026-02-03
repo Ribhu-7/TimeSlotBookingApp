@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatCardModule } from '@angular/material/card';
@@ -10,7 +10,6 @@ import { MatTableModule } from '@angular/material/table';
 import { MatIconModule } from '@angular/material/icon';
 import { MatChipsModule } from '@angular/material/chips';
 import { ApiService, TimeSlot } from '../api/api.service';
-import { FilterPipe } from '../shared/filter.pipe';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -26,8 +25,7 @@ import { Subscription } from 'rxjs';
     MatSelectModule,
     MatTableModule,
     MatIconModule,
-    MatChipsModule,
-    FilterPipe
+    MatChipsModule
   ],
   templateUrl: './admin.component.html',
   styleUrls: ['./admin.component.css']
@@ -42,14 +40,18 @@ export class AdminComponent implements OnInit, OnDestroy {
   
   // All slots (for admin view)
   allSlots: TimeSlot[] = [];
-  displayedColumns: string[] = ['id', 'category', 'startTime', 'endTime', 'status', 'userId'];
+  displayedColumns: string[] = ['id', 'category', 'start_time', 'end_time', 'status', 'user_id'];
   
   // Filter
   filterCategory: string = '';
   
   private refreshSub?: Subscription;
 
-  constructor(private api: ApiService) {}
+  // ADDED: ChangeDetectorRef for manual change detection
+  constructor(
+    private api: ApiService,
+    private cdr: ChangeDetectorRef
+  ) {}
 
   ngOnInit() {
     console.log('🔧 Admin panel initialized');
@@ -70,20 +72,49 @@ export class AdminComponent implements OnInit, OnDestroy {
    * Load all slots (optionally filtered by category)
    */
   loadAllSlots() {
-    // Get slots for a wide date range to show all
-    const startDate = '2024-01-01'; // Start from beginning of year
-    console.log('📥 Loading all slots', this.filterCategory ? `for category: ${this.filterCategory}` : '');
+    const startDate = '2026-02-02';
+    
+    console.log('📥 Loading ALL slots from database');
+    console.log('   Filter category:', this.filterCategory || 'None (all categories)');
+    console.log('   Start date:', startDate);
     
     this.api.getSlots(startDate, this.filterCategory || undefined).subscribe({
       next: (slots) => {
-        console.log('✅ Received admin slots:', slots.length);
+        console.log('✅ Received slots from API:', slots.length);
+        console.log('📊 Full slots data:', slots);
+        
+        if (slots.length > 0) {
+          console.log('   Sample slot:', slots[0]);
+          console.log('   Sample slot keys:', Object.keys(slots[0]));
+          console.log('   Categories found:', [...new Set(slots.map(s => s.category))]);
+        } else {
+          console.log('   ⚠️ No slots returned from API');
+        }
+        
+        // Sort by most recent first
         this.allSlots = slots.sort((a, b) => 
           new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
         );
+        
+        console.log('   ✅ allSlots updated:', this.allSlots.length);
+        console.log('   First slot in allSlots:', this.allSlots[0]);
+        
+        // ADDED: Force change detection
+        this.cdr.detectChanges();
+        
+        // ADDED: Extra debug for template binding
+        setTimeout(() => {
+          console.log('   🔍 Checking after timeout:');
+          console.log('   allSlots.length:', this.allSlots.length);
+          console.log('   allSlots array:', this.allSlots);
+        }, 100);
       },
       error: (err) => {
         console.error('❌ Error loading admin slots:', err);
+        console.error('   Error object:', err);
+        console.error('   Error message:', err.message);
         this.allSlots = [];
+        this.cdr.detectChanges();
       }
     });
   }
@@ -92,7 +123,7 @@ export class AdminComponent implements OnInit, OnDestroy {
    * Apply category filter
    */
   applyFilter() {
-    console.log('🔍 Filtering by category:', this.filterCategory);
+    console.log('🔍 Applying filter:', this.filterCategory);
     this.loadAllSlots();
   }
 
@@ -100,6 +131,7 @@ export class AdminComponent implements OnInit, OnDestroy {
    * Clear filter
    */
   clearFilter() {
+    console.log('🧹 Clearing filter');
     this.filterCategory = '';
     this.loadAllSlots();
   }
@@ -109,16 +141,20 @@ export class AdminComponent implements OnInit, OnDestroy {
    */
   addSlot() {
     console.log('🔵 Add slot clicked');
-    console.log('Start:', this.startTime, 'End:', this.endTime, 'Category:', this.category);
+    console.log('   Category:', this.category);
+    console.log('   Start Time (input):', this.startTime);
+    console.log('   End Time (input):', this.endTime);
     
     if (!this.startTime || !this.endTime) {
       alert('Please select both start and end times');
       return;
     }
 
-    // Validate that end time is after start time
     const start = new Date(this.startTime);
     const end = new Date(this.endTime);
+    
+    console.log('   Start Time (parsed):', start);
+    console.log('   End Time (parsed):', end);
     
     if (end <= start) {
       alert('End time must be after start time');
@@ -131,20 +167,27 @@ export class AdminComponent implements OnInit, OnDestroy {
       end_time: end.toISOString()
     };
     
-    console.log('📤 Sending payload:', payload);
+    console.log('📤 Sending payload to API:', payload);
 
     this.api.createSlot(payload).subscribe({
       next: (res) => {
-        console.log('✅ Slot created:', res);
+        console.log('✅ Slot created successfully:', res);
+        
         // Clear form
         this.startTime = '';
         this.endTime = '';
+        
         // Show success message
-        alert('Time slot created successfully!');
+        alert(`Time slot created successfully!\nID: ${res.id}\nCategory: ${res.category}`);
+        
+        // Reload slots
+        setTimeout(() => this.loadAllSlots(), 500);
       },
       error: (err) => {
         console.error('❌ Error creating slot:', err);
-        alert('Failed to create time slot. Please try again.');
+        console.error('   Error response:', err.error);
+        console.error('   Status:', err.status);
+        alert(`Failed to create time slot.\nError: ${err.error?.detail || err.message}`);
       }
     });
   }
@@ -172,6 +215,10 @@ export class AdminComponent implements OnInit, OnDestroy {
     
     const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
     this.endTime = this.formatDateTimeLocal(oneHourLater);
+    
+    console.log('⏰ Set to now');
+    console.log('   Start:', this.startTime);
+    console.log('   End:', this.endTime);
   }
 
   /**
@@ -184,5 +231,34 @@ export class AdminComponent implements OnInit, OnDestroy {
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
+  /**
+   * Get count of booked slots
+   */
+  getBookedCount(): number {
+    return this.allSlots.filter(slot => slot.user_id !== null && slot.user_id !== undefined).length;
+  }
+
+  /**
+   * Get count of available slots
+   */
+  getAvailableCount(): number {
+    return this.allSlots.filter(slot => !slot.user_id).length;
+  }
+
+  /**
+   * Format date/time for display in the table
+   */
+  formatDateTime(dateStr: string): string {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
   }
 }
