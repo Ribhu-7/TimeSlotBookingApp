@@ -35,6 +35,7 @@ Backend	Python, FastAPI
 Frontend	Angular
 Database	SQLite / SQLAlchemy
 API	REST
+
 📂 Project Structure
 project-root/
 │
@@ -78,7 +79,6 @@ Windows
 
 venv\Scripts\activate
 
-
 Mac/Linux
 
 source venv/bin/activate
@@ -89,11 +89,9 @@ pip install -r requirements.txt
 Run backend
 uvicorn main:app --reload
 
-
 Backend runs at:
 
 http://localhost:8000
-
 
 Swagger docs:
 
@@ -103,11 +101,9 @@ http://localhost:8000/docs
 cd frontend
 npm install
 
-
 Run UI:
 
 ng serve
-
 
 Frontend runs at:
 
